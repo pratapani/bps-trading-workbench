@@ -1,0 +1,13 @@
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+*.pem
+apps/controller/public/.bps_session_token.tmp
+apps/controller/public/runtime_scan_config.json
+apps/controller/public/latest_bps_results.csv
+apps/controller/public/ExpiryData_*.csv
+data/results/

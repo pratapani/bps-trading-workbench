@@ -1,0 +1,10 @@
+{
+  "expiry": "29-Sep-2026",
+  "min_otm_percent": 5,
+  "max_otm_percent": 15,
+  "max_spread_width": 2000,
+  "min_profit_to_loss": 2,
+  "max_profit_to_loss": 10,
+  "min_oi": 100000,
+  "min_volume": 100000
+}

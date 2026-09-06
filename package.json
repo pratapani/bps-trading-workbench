@@ -1,0 +1,13 @@
+{
+  "name": "bps-trading-workbench",
+  "private": true,
+  "scripts": {
+    "install:web": "npm install --prefix apps/web",
+    "dev": "npm run dev --prefix apps/web",
+    "start": "powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1",
+    "build": "npm run build --prefix apps/web",
+    "preview": "npm run preview --prefix apps/web",
+    "controller": "node apps/controller/controller.mjs",
+    "deploy:scanner": "powershell -ExecutionPolicy Bypass -File scripts/deploy-scanner.ps1"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "bps-strategy-dashboard",
+  "private": true,
+  "version": "12.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "controller": "node controller.mjs"
+  },
+  "dependencies": {
+    "papaparse": "^5.5.3",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "recharts": "^3.1.2"
+  },
+  "devDependencies": {
+    "vite": "^7.1.3"
+  }
+}
