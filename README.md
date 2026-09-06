@@ -91,6 +91,40 @@ The EC2 instance must have:
 - An SSH security-group rule for TCP port 22
 - A Python virtual environment created by the deployment script
 
+## Breeze Connect API
+
+The EC2 scanner uses the `breeze-connect` Python package to connect to the
+ICICI Direct Breeze API. The dependency is listed in
+`services/scanner/requirements.txt` and is installed into the EC2 virtual
+environment by `npm.cmd run deploy:scanner`.
+
+The scanner uses Breeze to authenticate, load the available NFO contract
+universe, retrieve option-chain quotes, and read the spot and option market
+data used to calculate Bull Put Spread opportunities. The application performs
+screening and analysis only; it does not submit, modify, or cancel orders.
+
+The scanner requires these Breeze credentials:
+
+```env
+BREEZE_API_KEY=your-breeze-api-key
+BREEZE_API_SECRET=your-breeze-api-secret
+BREEZE_SESSION_TOKEN=your-breeze-session-token
+```
+
+The API key and secret must be available to the scanner on EC2, normally in the
+EC2-side `.env` file in the scanner directory. Do not put them in this public
+repository, the Windows project `.env`, the README, or the browser UI.
+
+Breeze session tokens are short-lived and should be refreshed according to the
+Breeze authentication process. For a one-off scan, the user can paste a fresh
+session token into the dashboard. The Windows controller uploads that token to
+EC2 over SCP for the scan, the scanner uses it in preference to the fallback
+`BREEZE_SESSION_TOKEN` value, and the temporary uploaded token file is deleted
+after it is read.
+
+If the token is invalid, expired, or missing, the scanner stops before market
+data collection and reports an authentication failure in the controller log.
+
 ## Clone And Configure
 
 Clone the public repository:
