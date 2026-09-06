@@ -29,7 +29,7 @@ function run(cmd,args,opts={}){
   });
 }
 function json(res,obj,code=200){
-  res.writeHead(code,{'Content-Type':'application/json','Access-Control-Allow-Origin':'http://localhost:5173','Cache-Control':'no-store'});res.end(JSON.stringify(obj));
+  res.writeHead(code,{'Content-Type':'application/json','Access-Control-Allow-Origin':'*','Cache-Control':'no-store'});res.end(JSON.stringify(obj));
 }
 function body(req){return new Promise((resolve,reject)=>{let s='';req.on('data',d=>s+=d);req.on('end',()=>{try{resolve(s?JSON.parse(s):{})}catch(e){reject(e)}})})}
 function formatExpiry(value){
@@ -105,13 +105,13 @@ async function doScan(cfg){
 }
 
 const server=http.createServer(async(req,res)=>{
-  if(req.method==='OPTIONS'){res.writeHead(204,{'Access-Control-Allow-Origin':'http://localhost:5173','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type'});return res.end()}
+  if(req.method==='OPTIONS'){res.writeHead(204,{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type'});return res.end()}
   if(req.url?.startsWith('/api/results/')&&req.method==='GET'){
     const fileName=decodeURIComponent(req.url.slice('/api/results/'.length).split('?')[0]);
     if(!fileName||path.basename(fileName)!==fileName||!fileName.endsWith('.csv'))return json(res,{error:'Invalid result file'},400);
     const filePath=path.join(PUBLIC,fileName);
     if(!fs.existsSync(filePath))return json(res,{error:'Result file not found'},404);
-    res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Access-Control-Allow-Origin':'http://localhost:5173','Cache-Control':'no-store'});
+    res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Access-Control-Allow-Origin':'*','Cache-Control':'no-store'});
     return fs.createReadStream(filePath).pipe(res);
   }
   if(req.url==='/api/status'&&req.method==='GET') return json(res,state);

@@ -8,6 +8,19 @@ opportunities, ranking setups, and exploring the resulting CSV locally.
 The application is intended for research and screening. It does not place
 orders or provide investment advice.
 
+## Screenshots
+
+The screenshots below show the dashboard workflow, scanner configuration, and
+results analysis views.
+
+![BPS Strategy Dashboard 1](references/screenshots/dashboard1.png)
+![BPS Strategy Dashboard 2](references/screenshots/dashboard2.png)
+![BPS Strategy Dashboard 3](references/screenshots/dashboard3.png)
+![BPS Strategy Dashboard 4](references/screenshots/dashboard4.png)
+![BPS Strategy Dashboard 5](references/screenshots/dashboard5.png)
+![BPS Strategy Dashboard 6](references/screenshots/dashboard6.png)
+![BPS Strategy Dashboard 7](references/screenshots/dashboard7.png)
+
 ## What It Does
 
 The scanner evaluates Bull Put Spread opportunities for a selected expiry date.

@@ -52,7 +52,7 @@ const minExpiry=dateInputValue(todayDate);
 const maxExpiry=dateInputValue(new Date(todayDate.getFullYear(),todayDate.getMonth()+3,todayDate.getDate()));
 
 function App(){
-const[rows,setRows]=useState([]),[fileName,setFileName]=useState(""),[minOtm,setMinOtm]=useState(3),[maxOtm,setMaxOtm]=useState(8),[maxWidth,setMaxWidth]=useState(200),[minPL,setMinPL]=useState(3),[maxPL,setMaxPL]=useState(5),[minIvSpread,setMinIvSpread]=useState(-10),[maxIvSpread,setMaxIvSpread]=useState(10),[topN,setTopN]=useState(10),[sortBy,setSortBy]=useState("SCORE"),[view,setView]=useState("all"),[search,setSearch]=useState(""),[selected,setSelected]=useState(null),[drilldown,setDrilldown]=useState(null),[page,setPage]=useState(1),[pageSize,setPageSize]=useState(25),[loadingDemo,setLoadingDemo]=useState(false),[gradeFilter,setGradeFilter]=useState(["A+","A","B","C","D"]),[gradeOpen,setGradeOpen]=useState(false),[applied,setApplied]=useState({minOtm:3,maxOtm:8,maxWidth:200,minPL:3,maxPL:5,minIvSpread:-10,maxIvSpread:10,grades:["A+","A","B","C","D"],search:""}),[scenario,setScenario]=useState(null),[controller,setController]=useState({running:false,status:"idle",message:"Ready",lines:[],error:null}),[runCfg,setRunCfg]=useState({host:"13.223.163.39",user:"ec2-user",keyPath:"C:\\Users\\durga\\Downloads\\bps-scanner-key.pem",remoteDir:"/home/ec2-user/bps-scanner",sessionToken:"",expiry:"",minOI:100000,minVolume:100000}),[runPanel,setRunPanel]=useState(true),[lastRunConfig,setLastRunConfig]=useState(()=>{try{return JSON.parse(localStorage.getItem("bps-last-run-config")||"null")}catch{return null}}),[logTimes,setLogTimes]=useState([]),[completeFilters,setCompleteFilters]=useState({});
+const[rows,setRows]=useState([]),[fileName,setFileName]=useState(""),[minOtm,setMinOtm]=useState(3),[maxOtm,setMaxOtm]=useState(8),[maxWidth,setMaxWidth]=useState(200),[minPL,setMinPL]=useState(3),[maxPL,setMaxPL]=useState(5),[minIvSpread,setMinIvSpread]=useState(-10),[maxIvSpread,setMaxIvSpread]=useState(10),[topN,setTopN]=useState(10),[sortBy,setSortBy]=useState("SCORE"),[view,setView]=useState("all"),[search,setSearch]=useState(""),[selected,setSelected]=useState(null),[drilldown,setDrilldown]=useState(null),[page,setPage]=useState(1),[pageSize,setPageSize]=useState(25),[loadingDemo,setLoadingDemo]=useState(false),[gradeFilter,setGradeFilter]=useState(["A+","A","B","C","D"]),[gradeOpen,setGradeOpen]=useState(false),[applied,setApplied]=useState({minOtm:3,maxOtm:8,maxWidth:200,minPL:3,maxPL:5,minIvSpread:-10,maxIvSpread:10,grades:["A+","A","B","C","D"],search:""}),[scenario,setScenario]=useState(null),[controller,setController]=useState({running:false,status:"idle",message:"Ready",lines:[],error:null}),[runCfg,setRunCfg]=useState({host:"13.223.163.39",user:"ec2-user",keyPath:"keys\\bps-scanner-key.pem",remoteDir:"/home/ec2-user/bps-scanner",sessionToken:"",expiry:"",minOI:100000,minVolume:100000}),[runPanel,setRunPanel]=useState(true),[lastRunConfig,setLastRunConfig]=useState(()=>{try{return JSON.parse(localStorage.getItem("bps-last-run-config")||"null")}catch{return null}}),[logTimes,setLogTimes]=useState([]),[completeFilters,setCompleteFilters]=useState({});
 
 const DEFAULT_FILTERS={minOtm:3,maxOtm:8,maxWidth:200,minPL:3,maxPL:5,minIvSpread:-10,maxIvSpread:10,grades:["A+","A","B","C","D"],search:""};
 const load=(data,name,scanConfig=null)=>{
@@ -213,6 +213,10 @@ const pollController=()=>{
     })
     .catch(()=>syncController({...controller,status:"offline",message:"Local controller not running"}));
 };
+
+useEffect(()=>{
+  pollController();
+},[]);
 
 const runScan=async()=>{
   try{

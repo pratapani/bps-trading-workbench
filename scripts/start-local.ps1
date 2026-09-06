@@ -20,6 +20,13 @@ if (-not $controllerRunning) {
         '-ExecutionPolicy', 'Bypass',
         '-Command', "Set-Location '$projectRoot'; npm.cmd run controller"
     ) -WorkingDirectory $projectRoot
+
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        Start-Sleep -Milliseconds 250
+        $controllerRunning = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue
+        if ($controllerRunning) { break }
+    }
+    if (-not $controllerRunning) { throw 'Controller did not start on port 8787.' }
 }
 
 npm.cmd run dev --prefix apps/web -- --open
