@@ -5,6 +5,7 @@
     "install:web": "npm install --prefix apps/web",
     "dev": "npm run dev --prefix apps/web",
     "start": "powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1",
+    "test:python": "py -m unittest discover -s tests -p \"test_*.py\" -v",
     "build": "npm run build --prefix apps/web",
     "preview": "npm run preview --prefix apps/web",
     "controller": "node apps/controller/controller.mjs",
