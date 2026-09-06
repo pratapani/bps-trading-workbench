@@ -172,7 +172,7 @@ repository.
 
 ## AWS CLI Setup
 
-The startup preflight uses the AWS EC2 API. Configure the AWS CLI once on
+The on-demand launch preflight uses the AWS EC2 API. Configure the AWS CLI once on
 Windows using an IAM identity or SSO profile:
 
 ```powershell
@@ -204,15 +204,16 @@ ec2:AuthorizeSecurityGroupIngress
 Use a least-privilege IAM identity for this workflow. Avoid using the AWS root
 account for routine development.
 
-## Daily Startup
+## On-Demand Scan Session
 
-Start the controller and dashboard with one command:
+Start the controller and dashboard whenever you want to scan the market and get
+the latest Bull Put Spread opportunities:
 
 ```powershell
 npm.cmd start
 ```
 
-The startup sequence is:
+The on-demand launch sequence is:
 
 1. Read the EC2 instance ID and AWS region from `.env`.
 2. Check the EC2 instance state.
@@ -225,7 +226,7 @@ The startup sequence is:
 9. Start the Node controller on `127.0.0.1:8787`.
 10. Start the Vite dashboard on `http://localhost:5173/`.
 
-The startup check does not remove old IP rules. This avoids unexpectedly
+The launch check does not remove old IP rules. This avoids unexpectedly
 disconnecting another approved workstation; old rules can be removed manually
 from AWS when no longer needed.
 
@@ -247,13 +248,18 @@ run, authenticates with Breeze, runs the scanner, and writes `bps_results.csv`.
 The controller copies the result back to Windows as a timestamped archive and
 updates `latest_bps_results.csv` for the dashboard.
 
+Opportunities are market-dependent and can change as prices, volatility,
+liquidity, and open interest move. Run a new on-demand scan whenever you need a
+fresh view; previously downloaded results represent the market conditions at
+the time that scan was executed.
+
 The temporary session-token file is removed by the scanner after it is read. If
 no UI token is uploaded, the scanner can fall back to
 `BREEZE_SESSION_TOKEN` from the EC2-side `.env`.
 
 ## Deploy Scanner Changes
 
-Deployment is separate from daily UI startup. Run it after changing the Python
+Deployment is separate from on-demand UI launch. Run it after changing the Python
 scanner or its runtime configuration:
 
 ```powershell
@@ -359,9 +365,9 @@ data/samples/                    Sample CSV inputs
 - Rotate credentials immediately if they are exposed.
 - Use an IAM identity with only the permissions required by this workflow.
 - A stopped EC2 instance may receive a different public IP after starting; the
-  startup and deployment preflights resolve the current address from the
+  on-demand launch and deployment preflights resolve the current address from the
   instance ID.
-- An Elastic IP avoids changing the EC2 address, but the startup check still
+- An Elastic IP avoids changing the EC2 address, but the launch check still
   refreshes the address for correctness.
 - Keep the controller bound to localhost unless remote access is deliberately
   configured.
