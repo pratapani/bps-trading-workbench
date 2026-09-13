@@ -49,16 +49,21 @@ if ($allowedCidrs -contains $cidr) {
     exit 0
 }
 
-$permissionJson = @(
-    [ordered]@{
-        IpProtocol = 'tcp'
-        FromPort = 22
-        ToPort = 22
-        IpRanges = @([ordered]@{ CidrIp = $cidr; Description = 'BPS Windows deployment' })
-    }
-) | ConvertTo-Json -Compress -Depth 5
-$authorizeArgs = @('ec2', 'authorize-security-group-ingress', '--group-id', $groupId, '--ip-permissions', $permissionJson)
+# Use AWS CLI shorthand syntax here instead of JSON. This avoids PowerShell
+# native-command JSON quoting issues on Windows.
+$permissionShorthand = "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=$cidr}]"
+
+$authorizeArgs = @(
+    'ec2',
+    'authorize-security-group-ingress',
+    '--group-id', $groupId,
+    '--ip-permissions', $permissionShorthand
+)
 if ($env:BPS_AWS_REGION) { $authorizeArgs += @('--region', $env:BPS_AWS_REGION) }
+
 & $awsCommand @authorizeArgs
-if ($LASTEXITCODE -ne 0) { throw "Unable to add SSH access for $cidr to $groupId." }
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to add SSH access for $cidr to $groupId."
+}
+
 Write-Host "Added SSH access for $cidr to $groupId."

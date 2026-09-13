@@ -2,6 +2,8 @@ import os
 import csv
 import time
 import smtplib
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from datetime import datetime
 from email.message import EmailMessage
@@ -35,6 +37,21 @@ SCAN_CONFIG_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "scan_config.json",
 )
+
+
+def normalize_expiry(value):
+    """Normalize the UI-selected expiry to Breeze's DD-Mon-YYYY format."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    for fmt in ("%Y-%m-%d", "%d-%b-%Y"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%d-%b-%Y")
+        except ValueError:
+            pass
+    return ""
 
 
 def load_scan_config():
@@ -71,9 +88,15 @@ def load_scan_config():
         )
         raise SystemExit(1)
 
+    expiry = normalize_expiry(config.get("expiry"))
+    if not expiry:
+        print("ERROR: scan_config.json must contain a valid selected expiry.")
+        print("       Expected YYYY-MM-DD or DD-Mon-YYYY.")
+        raise SystemExit(1)
+
     try:
         values = {
-            "expiry": str(config["expiry"]).strip(),
+            "expiry": expiry,
             "min_otm_percent": float(config["min_otm_percent"]),
             "max_otm_percent": float(config["max_otm_percent"]),
             "max_spread_width": float(config["max_spread_width"]),
@@ -83,13 +106,7 @@ def load_scan_config():
             "min_volume": float(config["min_volume"]),
         }
     except (TypeError, ValueError):
-        print("ERROR: All scan_config.json values must be numeric.")
-        raise SystemExit(1)
-
-    try:
-        datetime.strptime(values["expiry"], "%d-%b-%Y")
-    except ValueError:
-        print("ERROR: expiry must use the format DD-Mon-YYYY, e.g. 29-Sep-2026.")
+        print("ERROR: Numeric scan_config.json values are invalid.")
         raise SystemExit(1)
 
     if values["min_otm_percent"] < 0:
@@ -117,7 +134,7 @@ def load_scan_config():
 
 SCAN_CONFIG = load_scan_config()
 
-EXPIRY = SCAN_CONFIG["expiry"]
+SELECTED_EXPIRY = SCAN_CONFIG["expiry"]
 MIN_OTM_PERCENT = SCAN_CONFIG["min_otm_percent"]
 MAX_OTM_PERCENT = SCAN_CONFIG["max_otm_percent"]
 MAX_SPREAD_WIDTH = SCAN_CONFIG["max_spread_width"]
@@ -156,29 +173,29 @@ EXCLUDED = {
     "MCX",
 }
 # ============================================================
-# OPTIONAL STOCK LOT-SIZE FILE
+# STOCK LOT-SIZE FILE
 # ============================================================
 #
-# File:
-#   stock_lot.csv
+# stock_lot.csv is populated from ICICI Direct Security Master by
+# download_security_master.py.
 #
 # Format:
 #
 #   STOCK,LOT
 #   TCS,175
-#   BSE,200
-#   KALJEW,175
+#   DIXON,50
+#   KALJEW,1350
 #
-# Rules:
+# The scanner deliberately reads ONLY this CSV for lot size.
+# Security Master is the authoritative source used to populate it.
 #
-#   File does not exist       -> LOT = 1
-#   Stock not listed          -> LOT = 1
-#   Stock listed + valid LOT  -> use LOT
-#   Stock listed + blank LOT  -> LOT = 1
-#   Invalid LOT                -> LOT = 1
+# If a stock is not present or its LOT is invalid, LOT = 1.
 # ============================================================
 
-STOCK_LOT_FILE = "stock_lot.csv"
+STOCK_LOT_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "stock_lot.csv",
+)
 
 
 def load_stock_lots():
@@ -220,7 +237,6 @@ def load_stock_lots():
                 1,
             ):
 
-                # Need at least two columns
                 if len(row) < 2:
                     continue
 
@@ -235,43 +251,31 @@ def load_stock_lots():
                     .strip()
                 )
 
-                # Skip header
                 if row_number == 1:
-
                     if stock in {
                         "STOCK",
                         "SYMBOL",
                         "STOCK_CODE",
                     }:
-
                         continue
 
-                if not stock:
-                    continue
-
-                if not lot_text:
+                if not stock or not lot_text:
                     continue
 
                 try:
-
                     lot = int(
                         float(
                             lot_text
                         )
                     )
-
                 except (
                     ValueError,
                     TypeError,
                 ):
-
                     continue
 
                 if lot > 0:
-
-                    lots[
-                        stock
-                    ] = lot
+                    lots[stock] = lot
 
     except Exception as e:
 
@@ -299,6 +303,7 @@ def get_lot_size(stock):
         stock.upper(),
         1,
     )
+
 
 # ============================================================
 # EXPIRY HELPERS
@@ -363,7 +368,6 @@ def get_available_expiries(
 def choose_expiry(
     nfo,
     stock,
-    preferred_expiry=None,
 ):
 
     expiries = (
@@ -374,11 +378,6 @@ def choose_expiry(
     )
 
     if not expiries:
-        return None
-
-    if preferred_expiry:
-        if preferred_expiry in expiries:
-            return preferred_expiry
         return None
 
     # --------------------------------------------------------
@@ -687,19 +686,6 @@ session_token = os.getenv(
     "BREEZE_SESSION_TOKEN"
 )
 
-session_token_file = "/tmp/bps_session_token"
-if os.path.exists(session_token_file):
-    try:
-        with open(session_token_file, "r", encoding="utf-8") as f:
-            uploaded_session_token = f.read().strip()
-        if uploaded_session_token:
-            session_token = uploaded_session_token
-    finally:
-        try:
-            os.remove(session_token_file)
-        except OSError:
-            pass
-
 
 if not (
     api_key
@@ -836,6 +822,8 @@ if MAX_STOCKS > 0:
     )
 
 
+print(f"Selected expiry: {SELECTED_EXPIRY}")
+print()
 print(
     f"Stock-like underlyings: "
     f"{len(underlyings)}"
@@ -847,260 +835,173 @@ print()
 # ============================================================
 # SCAN
 # ============================================================
+#
+# Network/API work is performed concurrently. Results are collected in
+# the main thread so CSV writing and global ranking remain deterministic.
+#
 
 all_results = []
-
 successful = 0
 failed = 0
 zero_candidates = 0
-
 failure_details = []
 
 start = time.time()
 
+# Pre-build the expiry map once. The old sequential implementation scanned
+# the entire NFO master separately for every stock.
+available_expiries_by_stock = {}
+for key in nfo:
+    if not key.startswith("OPT-") or not key.endswith("-PE"):
+        continue
+    parts = key.split("-")
+    if len(parts) < 7:
+        continue
+    stock = parts[1]
+    expiry = "-".join(parts[2:5])
+    available_expiries_by_stock.setdefault(stock, set()).add(expiry)
 
-for number, stock in enumerate(
-    underlyings,
-    1,
-):
 
-    print(
-        f"[{number:03d}/"
-        f"{len(underlyings):03d}] "
-        f"{stock:<8} ",
-        end="",
-        flush=True,
-    )
-
+def scan_one_stock(number, stock):
+    """Fetch and process one stock. No shared result state is modified here."""
     try:
+        expiry = SELECTED_EXPIRY
+        available_expiries = available_expiries_by_stock.get(stock, set())
 
-        expiry = (
-            choose_expiry(
-                nfo,
-                stock,
-                preferred_expiry=EXPIRY,
-            )
+        if expiry not in available_expiries:
+            return {
+                "number": number,
+                "stock": stock,
+                "status": "failed",
+                "reason": f"Selected expiry {expiry} not available",
+            }
+
+        # Respect Breeze's documented 100 calls/minute limit globally.
+        wait_for_api_slot()
+
+        response = breeze.get_option_chain_quotes(
+            stock_code=stock,
+            exchange_code="NFO",
+            product_type="options",
+            expiry_date=expiry,
+            right="put",
+            strike_price="",
         )
 
-        if not expiry:
+        if response.get("Status") != 200:
+            error = response.get("Error", "Unknown error")
+            return {
+                "number": number,
+                "stock": stock,
+                "status": "failed",
+                "reason": str(error),
+            }
 
-            print(
-                "NO EXPIRY"
-            )
-
-            failed += 1
-
-            failure_details.append(
-                (
-                    stock,
-                    "No expiry",
-                )
-            )
-
-            continue
-
-
-        response = (
-            breeze
-            .get_option_chain_quotes(
-                stock_code=stock,
-                exchange_code="NFO",
-                product_type="options",
-                expiry_date=expiry,
-                right="put",
-            )
-        )
-
-
-        if response.get(
-            "Status"
-        ) != 200:
-
-            error = response.get(
-                "Error",
-                "Unknown error",
-            )
-
-            print(
-                f"FAILED │ "
-                f"{error}"
-            )
-
-            failed += 1
-
-            failure_details.append(
-                (
-                    stock,
-                    str(error),
-                )
-            )
-
-            continue
-
-
-        contracts = (
-            response.get(
-                "Success"
-            )
-            or []
-        )
-
-
+        contracts = response.get("Success") or []
         if not contracts:
+            return {
+                "number": number,
+                "stock": stock,
+                "status": "failed",
+                "reason": "No contracts",
+            }
 
-            print(
-                "NO CONTRACTS"
-            )
-
-            failed += 1
-
-            failure_details.append(
-                (
-                    stock,
-                    "No contracts",
-                )
-            )
-
-            continue
-
-
-        puts, spot = (
-            convert_contracts(
-                contracts,
-                expiry,
-            )
-        )
-
+        puts, spot = convert_contracts(contracts, expiry)
 
         if spot is None:
-
-            print(
-                "NO SPOT"
-            )
-
-            failed += 1
-
-            failure_details.append(
-                (
-                    stock,
-                    "No spot",
-                )
-            )
-
-            continue
-
-
-        # ----------------------------------------------------
-        # Actual lot size if supplied.
-        # Otherwise 1.
-        # ----------------------------------------------------
+            return {
+                "number": number,
+                "stock": stock,
+                "status": "failed",
+                "reason": "No spot",
+            }
 
         lot_size = get_lot_size(stock)
 
-
-        # ----------------------------------------------------
-        # BPS SCAN
-        # ----------------------------------------------------
-
         results = scan_bps(
-
             puts,
-
             lot_size=lot_size,
-
             spot=spot,
-
-            expiry=expiry,
-
-            min_otm_percent=(
-                MIN_OTM_PERCENT
-            ),
-
-            max_otm_percent=(
-                MAX_OTM_PERCENT
-            ),
-
-            max_spread_width=(
-                MAX_SPREAD_WIDTH
-            ),
-
-            min_profit_to_loss=(
-                MIN_PROFIT_TO_LOSS
-            ),
-
-            max_profit_to_loss=(
-                MAX_PROFIT_TO_LOSS
-            ),
-
+            min_otm_percent=MIN_OTM_PERCENT,
+            max_otm_percent=MAX_OTM_PERCENT,
+            max_spread_width=MAX_SPREAD_WIDTH,
+            min_profit_to_loss=MIN_PROFIT_TO_LOSS,
+            max_profit_to_loss=MAX_PROFIT_TO_LOSS,
             min_oi=MIN_OI,
-
             min_volume=MIN_VOLUME,
         )
 
-
-        # ----------------------------------------------------
-        # Add stock metadata
-        # ----------------------------------------------------
-
         for result in results:
+            result["stock"] = stock
+            result["spot"] = spot
+            result["expiry"] = expiry
+            result["lot_size"] = lot_size
 
-            result[
-                "stock"
-            ] = stock
-
-            result[
-                "spot"
-            ] = spot
-
-            result[
-                "expiry"
-            ] = expiry
-
-            result[
-                "lot_size"
-            ] = lot_size
-
-            all_results.append(
-                result
-            )
-
-
-        successful += 1
-
-
-        print(
-            f"OK │ "
-            f"Spot ₹{spot:,.2f} │ "
-            f"Contracts {len(contracts):2d} │ "
-            f"BPS {len(results):2d}"
-        )
-
-
-        if not results:
-
-            zero_candidates += 1
-
-
-        time.sleep(
-            API_DELAY
-        )
-
+        return {
+            "number": number,
+            "stock": stock,
+            "status": "success",
+            "spot": spot,
+            "contracts": len(contracts),
+            "results": results,
+        }
 
     except Exception as e:
+        return {
+            "number": number,
+            "stock": stock,
+            "status": "failed",
+            "reason": str(e),
+        }
+
+
+print(f"Concurrent workers  : {MAX_WORKERS}")
+print(f"API pacing          : {API_CALLS_PER_MINUTE * API_RATE_SAFETY:.0f} calls/min safety target")
+print()
+
+with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    futures = {
+        executor.submit(scan_one_stock, number, stock): (number, stock)
+        for number, stock in enumerate(underlyings, 1)
+    }
+
+    for future in as_completed(futures):
+        result = future.result()
+        number = result["number"]
+        stock = result["stock"]
 
         print(
-            f"ERROR │ {e}"
+            f"[{number:03d}/{len(underlyings):03d}] "
+            f"{stock:<8} ",
+            end="",
+            flush=True,
         )
 
-        failed += 1
+        if result["status"] == "success":
+            results = result["results"]
+            all_results.extend(results)
+            successful += 1
 
-        failure_details.append(
-            (
-                stock,
-                str(e),
+            if not results:
+                zero_candidates += 1
+
+            print(
+                f"OK │ Spot ₹{result['spot']:,.2f} │ "
+                f"Contracts {result['contracts']:2d} │ "
+                f"BPS {len(results):2d}"
             )
-        )
+        else:
+            failed += 1
+            failure_details.append((stock, result["reason"]))
 
+            if result["reason"].startswith("Selected expiry"):
+                print(f"NO SELECTED EXPIRY │ {SELECTED_EXPIRY}")
+            elif result["reason"] == "No contracts":
+                print("NO CONTRACTS")
+            elif result["reason"] == "No spot":
+                print("NO SPOT")
+            else:
+                print(f"FAILED │ {result['reason']}")
 
 # ============================================================
 # GLOBAL RANKING

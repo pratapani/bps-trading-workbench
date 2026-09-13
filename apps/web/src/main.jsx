@@ -1,4 +1,4 @@
-import React,{useEffect,useMemo,useState}from"react";
+import React,{useMemo,useState}from"react";
 import{createRoot}from"react-dom/client";
 import Papa from"papaparse";
 import{ResponsiveContainer,BarChart,Bar,XAxis,YAxis,Tooltip,CartesianGrid,PieChart,Pie,Cell,Legend,ScatterChart,Scatter,ZAxis,ReferenceLine}from"recharts";
@@ -6,7 +6,6 @@ import"./styles.css";
 
 const num=v=>{const n=Number(String(v??"").replace(/[₹,%\s,]/g,""));return Number.isFinite(n)?n:0};
 const money=n=>"₹"+Number(n||0).toLocaleString("en-IN",{maximumFractionDigits:2});
-const amount=n=>Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
 const integer=n=>Number(n||0).toLocaleString("en-IN",{maximumFractionDigits:0});
 
 const normalize=rows=>rows.map((r,i)=>{
@@ -18,8 +17,6 @@ EXPIRY:String(c.expiry??"").trim(),
 SPOT:num(c.spot),
 SELL:num(c.sell_strike??c.sell),
 BUY:num(c.buy_strike??c.buy),
-SELL_IV:num(c.sell_iv),
-BUY_IV:num(c.buy_iv),
 SELL_PE_BID:num(c.sell_pe_bid??c.sell_bid),
 SELL_PE_OFFER:num(c.sell_pe_offer??c.sell_offer),
 BUY_PE_BID:num(c.buy_pe_bid??c.buy_bid),
@@ -32,32 +29,36 @@ LOT:num(c.lot_size??c.lot)||1,
 "PROFIT/LOT":num(c.profit_per_lot??c["profit/lot"]),
 "LOSS/LOT":num(c.loss_per_lot??c["loss/lot"]),
 BREAKEVEN:num(c.breakeven),
-"P:L":num(c.profit_to_loss??c["p:l"]),
-"IV SPREAD":num(c.sell_iv)-num(c.buy_iv),
-"IV RATIO":num(c.buy_iv)>0?num(c.sell_iv)/num(c.buy_iv):0
+"P:L":num(c.profit_to_loss??c["p:l"])
 }}).filter(r=>r.STOCK);
 function score(r,minOtm,maxOtm,maxWidth,minPL,maxPL){
 const otm=Math.max(0,Math.min(1,(r["OTM%"]-minOtm)/Math.max(.1,maxOtm-minOtm)));
 const pl=1-Math.max(0,Math.min(1,(r["P:L"]-minPL)/Math.max(.1,maxPL-minPL)));
 const width=Math.max(0,1-Math.min(1,r.WIDTH/Math.max(1,maxWidth)));
 const credit=Math.max(0,Math.min(1,r.CREDIT/Math.max(1,r.SPOT*.01)));
-const ivSpread=Math.max(0,Math.min(1,r["IV SPREAD"]/10));
-return Math.round(100*(.30*otm+.28*pl+.18*width+.14*credit+.10*ivSpread));
+return Math.round(100*(.35*otm+.30*pl+.20*width+.15*credit));
 }
 const grade=s=>s>=82?"A+":s>=72?"A":s>=62?"B":s>=52?"C":"D";
 const gradeClass=g=>g==="A+"?"Aplus":g;
-const dateInputValue=date=>{const year=date.getFullYear(),month=String(date.getMonth()+1).padStart(2,"0"),day=String(date.getDate()).padStart(2,"0");return `${year}-${month}-${day}`};
-const todayDate=new Date();
-const minExpiry=dateInputValue(todayDate);
-const maxExpiry=dateInputValue(new Date(todayDate.getFullYear(),todayDate.getMonth()+3,todayDate.getDate()));
+const localDateISO=()=>{const d=new Date();const pad=n=>String(n).padStart(2,"0");return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`};
+const addMonthsISO=(months)=>{const d=new Date();d.setMonth(d.getMonth()+months);const pad=n=>String(n).padStart(2,"0");return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`};
+const toExpiryISO=v=>{if(!v)return "";const s=String(v).trim();if(/^\d{4}-\d{2}-\d{2}$/.test(s))return s;const m=s.match(/^(\d{2})-([A-Za-z]{3})-(\d{4})$/);if(!m)return "";const months={Jan:"01",Feb:"02",Mar:"03",Apr:"04",May:"05",Jun:"06",Jul:"07",Aug:"08",Sep:"09",Oct:"10",Nov:"11",Dec:"12"};return months[m[2]]?`${m[3]}-${months[m[2]]}-${m[1]}`:""};
+const formatExpiryDisplay=v=>{if(!v)return "—";const s=String(v).trim();const m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);if(m){const months=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];return `${m[3]}-${months[Number(m[2])-1]}-${m[1]}`};return s};
+const expiryFromRows=rows=>{const values=[...new Set(rows.map(r=>String(r.EXPIRY||"").trim()).filter(Boolean))];return values.length===1?values[0]:values.length>1?"Mixed expiries":""};
 
 function App(){
-const[rows,setRows]=useState([]),[fileName,setFileName]=useState(""),[minOtm,setMinOtm]=useState(3),[maxOtm,setMaxOtm]=useState(8),[maxWidth,setMaxWidth]=useState(200),[minPL,setMinPL]=useState(3),[maxPL,setMaxPL]=useState(5),[minIvSpread,setMinIvSpread]=useState(-10),[maxIvSpread,setMaxIvSpread]=useState(10),[topN,setTopN]=useState(10),[sortBy,setSortBy]=useState("SCORE"),[view,setView]=useState("all"),[search,setSearch]=useState(""),[selected,setSelected]=useState(null),[drilldown,setDrilldown]=useState(null),[page,setPage]=useState(1),[pageSize,setPageSize]=useState(25),[loadingDemo,setLoadingDemo]=useState(false),[gradeFilter,setGradeFilter]=useState(["A+","A","B","C","D"]),[gradeOpen,setGradeOpen]=useState(false),[applied,setApplied]=useState({minOtm:3,maxOtm:8,maxWidth:200,minPL:3,maxPL:5,minIvSpread:-10,maxIvSpread:10,grades:["A+","A","B","C","D"],search:""}),[scenario,setScenario]=useState(null),[controller,setController]=useState({running:false,status:"idle",message:"Ready",lines:[],error:null}),[runCfg,setRunCfg]=useState({host:"13.223.163.39",user:"ec2-user",keyPath:"keys\\bps-scanner-key.pem",remoteDir:"/home/ec2-user/bps-scanner",sessionToken:"",expiry:"",minOI:100000,minVolume:100000}),[runPanel,setRunPanel]=useState(true),[lastRunConfig,setLastRunConfig]=useState(()=>{try{return JSON.parse(localStorage.getItem("bps-last-run-config")||"null")}catch{return null}}),[logTimes,setLogTimes]=useState([]),[completeFilters,setCompleteFilters]=useState({});
+const[rows,setRows]=useState([]),[fileName,setFileName]=useState(""),[minOtm,setMinOtm]=useState(3),[maxOtm,setMaxOtm]=useState(8),[maxWidth,setMaxWidth]=useState(200),[minPL,setMinPL]=useState(3),[maxPL,setMaxPL]=useState(5),[expiry,setExpiry]=useState(()=>{try{return localStorage.getItem("bps-selected-expiry")||""}catch{return ""}}),[topN,setTopN]=useState(10),[sortBy,setSortBy]=useState("SCORE"),[view,setView]=useState("all"),[search,setSearch]=useState(""),[selected,setSelected]=useState(null),[page,setPage]=useState(1),[pageSize,setPageSize]=useState(25),[loadingDemo,setLoadingDemo]=useState(false),[gradeFilter,setGradeFilter]=useState(["A+","A","B","C","D"]),[gradeOpen,setGradeOpen]=useState(false),[applied,setApplied]=useState({minOtm:3,maxOtm:8,maxWidth:200,minPL:3,maxPL:5,grades:["A+","A","B","C","D"],search:""}),[scenario,setScenario]=useState(null),[controller,setController]=useState({running:false,status:"idle",message:"Ready",lines:[],error:null}),[runCfg,setRunCfg]=useState({host:"13.223.163.39",user:"ec2-user",keyPath:"C:\\Users\\durga\\Downloads\\bps-scanner-key.pem",remoteDir:"/home/ec2-user/bps-scanner",sessionToken:"",minOI:100000,minVolume:100000}),[runPanel,setRunPanel]=useState(true),[lastRunConfig,setLastRunConfig]=useState(()=>{try{return JSON.parse(localStorage.getItem("bps-last-run-config")||"null")}catch{return null}}),[logTimes,setLogTimes]=useState([]),[completeFilters,setCompleteFilters]=useState({});
 
-const DEFAULT_FILTERS={minOtm:3,maxOtm:8,maxWidth:200,minPL:3,maxPL:5,minIvSpread:-10,maxIvSpread:10,grades:["A+","A","B","C","D"],search:""};
+const DEFAULT_FILTERS={minOtm:3,maxOtm:8,maxWidth:200,minPL:3,maxPL:5,grades:["A+","A","B","C","D"],search:""};
 const load=(data,name,scanConfig=null)=>{
   const parsed=normalize(data);
   const cfg=scanConfig||null;
+  const loadedExpiry=cfg?.expiry || expiryFromRows(parsed);
+  const loadedExpiryISO=toExpiryISO(loadedExpiry);
+  if(loadedExpiryISO){
+    setExpiry(loadedExpiryISO);
+    try{localStorage.setItem("bps-selected-expiry",loadedExpiryISO)}catch{}
+  }
   setRows(parsed);
   setFileName(name);
   setSelected(null);
@@ -78,18 +79,20 @@ const load=(data,name,scanConfig=null)=>{
     setApplied({...DEFAULT_FILTERS,grades:[...DEFAULT_FILTERS.grades]});
   }
   setSearch("");
+  setCompleteFilters({});
   setGradeFilter([...DEFAULT_FILTERS.grades]);
   setView("all");
   setPage(1);
 };
 const handleFile=e=>{const f=e.target.files?.[0];if(f)Papa.parse(f,{header:true,skipEmptyLines:true,complete:r=>load(r.data,f.name)})};
 const loadDemo=async()=>{setLoadingDemo(true);try{const text=await fetch("/sample_bps_results.csv").then(r=>r.text());Papa.parse(text,{header:true,skipEmptyLines:true,complete:r=>{load(r.data,"Demo · current scanner CSV");setLoadingDemo(false)}})}catch(e){setLoadingDemo(false)}};
+
 const scored=useMemo(()=>rows.map(r=>{const s=score(r,applied.minOtm,applied.maxOtm,applied.maxWidth,applied.minPL,applied.maxPL);return Object.assign({},r,{SCORE:s})}),[rows,applied.minOtm,applied.maxOtm,applied.maxWidth,applied.minPL,applied.maxPL]);
 const matching=useMemo(()=>scored.filter(r=>r.STOCK.toLowerCase().includes(applied.search.toLowerCase())),[scored,applied.search]);
 
 // Base screening is evaluated first. Grade filtering must NOT participate here,
 // because grades are recalculated for the current screening universe below.
-const screened=useMemo(()=>matching.filter(r=>r["OTM%"]>=applied.minOtm&&r["OTM%"]<=applied.maxOtm&&r.WIDTH<=applied.maxWidth&&r["P:L"]>=applied.minPL&&r["P:L"]<=applied.maxPL&&r["IV SPREAD"]>=applied.minIvSpread&&r["IV SPREAD"]<=applied.maxIvSpread),[matching,applied.minOtm,applied.maxOtm,applied.maxWidth,applied.minPL,applied.maxPL,applied.minIvSpread,applied.maxIvSpread]);
+const screened=useMemo(()=>matching.filter(r=>r["OTM%"]>=applied.minOtm&&r["OTM%"]<=applied.maxOtm&&r.WIDTH<=applied.maxWidth&&r["P:L"]>=applied.minPL&&r["P:L"]<=applied.maxPL),[matching,applied.minOtm,applied.maxOtm,applied.maxWidth,applied.minPL,applied.maxPL]);
 
 // Rank the CURRENT screening universe first. The ranking therefore changes
 // when OTM / width / P:L criteria change.
@@ -98,7 +101,6 @@ if(sortBy==="PROFIT/LOT")return b["PROFIT/LOT"]-a["PROFIT/LOT"];
 if(sortBy==="P:L")return a["P:L"]-b["P:L"];
 if(sortBy==="OTM%")return b["OTM%"]-a["OTM%"];
 if(sortBy==="WIDTH")return a.WIDTH-b.WIDTH;
-if(sortBy==="IV SPREAD")return b["IV SPREAD"]-a["IV SPREAD"];
 return b.SCORE-a.SCORE;
 }),[screened,sortBy]);
 
@@ -122,14 +124,25 @@ const best=qualified.slice(0,topN);
 const allRows=useMemo(()=>[...matching].sort((a,b)=>a.RK-b.RK),[matching]);
 const completeColumns=[
 {key:"RK",label:"RK",group:"identity",value:r=>r.RK},
-{key:"STOCK",label:"STOCK",group:"identity",value:r=>r.STOCK},{key:"EXPIRY",label:"EXPIRY",group:"identity",value:r=>r.EXPIRY||""},
-{key:"SPOT",label:"SPOT",group:"market",value:r=>r.SPOT},{key:"SELL",label:"SELL",group:"strikes",value:r=>r.SELL},{key:"BUY",label:"BUY",group:"strikes",value:r=>r.BUY},
-{key:"SELL_IV",label:"SELL IV",group:"iv",value:r=>r.SELL_IV},{key:"BUY_IV",label:"BUY IV",group:"iv",value:r=>r.BUY_IV},{key:"IV SPREAD",label:"IV SPREAD",group:"iv",value:r=>r["IV SPREAD"]},{key:"IV RATIO",label:"IV RATIO",group:"iv",value:r=>r["IV RATIO"]},
-{key:"SELL_PE_BID",label:"SELL BID",group:"quotes",value:r=>r.SELL_PE_BID},{key:"SELL_PE_OFFER",label:"SELL OFFER",group:"quotes",value:r=>r.SELL_PE_OFFER},{key:"BUY_PE_BID",label:"BUY BID",group:"quotes",value:r=>r.BUY_PE_BID},{key:"BUY_PE_OFFER",label:"BUY OFFER",group:"quotes",value:r=>r.BUY_PE_OFFER},
-{key:"OTM%",label:"OTM%",group:"metrics",value:r=>r["OTM%"]},{key:"OTM PTS",label:"OTM PTS",group:"metrics",value:r=>r["OTM PTS"]},{key:"WIDTH",label:"WIDTH",group:"metrics",value:r=>r.WIDTH},
-{key:"CREDIT",label:"CREDIT",group:"economics",value:r=>r.CREDIT},{key:"LOT",label:"LOT",group:"economics",value:r=>r.LOT},{key:"PROFIT/LOT",label:"PROFIT/LOT",group:"economics",value:r=>r["PROFIT/LOT"]},
-{key:"LOSS/LOT",label:"LOSS/LOT",group:"risk",value:r=>r["LOSS/LOT"]},{key:"BREAKEVEN",label:"BREAKEVEN",group:"risk",value:r=>r.BREAKEVEN},{key:"P:L",label:"P:L",group:"risk",value:r=>r["P:L"]},
-{key:"GRADE",label:"GRADE",group:"dashboard",value:r=>r.GRADE},{key:"SCORE",label:"SCORE",group:"dashboard",value:r=>r.SCORE}
+{key:"STOCK",label:"STOCK",group:"identity",value:r=>r.STOCK},
+{key:"SPOT",label:"SPOT",group:"market",value:r=>r.SPOT},
+{key:"SELL",label:"SELL",group:"strikes",value:r=>r.SELL},
+{key:"BUY",label:"BUY",group:"strikes",value:r=>r.BUY},
+{key:"SELL_PE_BID",label:"SELL BID",group:"quotes",value:r=>r.SELL_PE_BID},
+{key:"SELL_PE_OFFER",label:"SELL OFFER",group:"quotes",value:r=>r.SELL_PE_OFFER},
+{key:"BUY_PE_BID",label:"BUY BID",group:"quotes",value:r=>r.BUY_PE_BID},
+{key:"BUY_PE_OFFER",label:"BUY OFFER",group:"quotes",value:r=>r.BUY_PE_OFFER},
+{key:"OTM%",label:"OTM%",group:"metrics",value:r=>r["OTM%"]},
+{key:"OTM PTS",label:"OTM PTS",group:"metrics",value:r=>r["OTM PTS"]},
+{key:"WIDTH",label:"WIDTH",group:"metrics",value:r=>r.WIDTH},
+{key:"CREDIT",label:"CREDIT",group:"economics",value:r=>r.CREDIT},
+{key:"LOT",label:"LOT",group:"economics",value:r=>r.LOT},
+{key:"PROFIT/LOT",label:"PROFIT/LOT",group:"economics",value:r=>r["PROFIT/LOT"]},
+{key:"LOSS/LOT",label:"LOSS/LOT",group:"risk",value:r=>r["LOSS/LOT"]},
+{key:"BREAKEVEN",label:"BREAKEVEN",group:"risk",value:r=>r.BREAKEVEN},
+{key:"P:L",label:"P:L",group:"risk",value:r=>r["P:L"]},
+{key:"GRADE",label:"GRADE",group:"dashboard",value:r=>r.GRADE},
+{key:"SCORE",label:"SCORE",group:"dashboard",value:r=>r.SCORE}
 ];
 const filterMatch=(value,query)=>{const q=String(query??"").trim().toLowerCase();if(!q)return true;const raw=String(value??"").replace(/,/g,"").replace(/₹/g,"").replace(/%/g,"").trim();const m=q.match(/^(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)$/);if(m){const n=Number(raw),v=Number(m[2]);if(!Number.isFinite(n))return false;if(m[1]===">=")return n>=v;if(m[1]==="<=")return n<=v;if(m[1]===">")return n>v;if(m[1]==="<")return n<v;return n===v}return raw.toLowerCase().includes(q)};
 const completeFiltered=useMemo(()=>allRows.filter(r=>completeColumns.every(c=>filterMatch(c.value(r),completeFilters[c.key]))),[allRows,completeFilters]);
@@ -151,36 +164,28 @@ const plData=useMemo(()=>{
       const p=num(r["P:L"]);
       return i===3?p>=a&&p<=b:p>=a&&p<b;
     }).length;
-    return {name:`${fmt(a)}–${fmt(b)}`,count,rows:qualified.filter(r=>{const p=num(r["P:L"]);return i===3?p>=a&&p<=b:p>=a&&p<b})};
+    return {name:`${fmt(a)}–${fmt(b)}`,count};
   });
 },[qualified,applied.minPL,applied.maxPL]);
 // Lower P:L means less loss relative to profit, so the lower band is stronger.
 const plColors=["#22c55e","#14b8a6","#f59e0b","#ef4444"];
 
 const widthData=useMemo(()=>[
-{name:"0–25",rows:qualified.filter(r=>r.WIDTH<=25)},
-{name:"26–50",rows:qualified.filter(r=>r.WIDTH>25&&r.WIDTH<=50)},
-{name:"51–100",rows:qualified.filter(r=>r.WIDTH>50&&r.WIDTH<=100)},
-{name:"101–150",rows:qualified.filter(r=>r.WIDTH>100&&r.WIDTH<=150)},
-{name:"151–200",rows:qualified.filter(r=>r.WIDTH>150)}
-].map(x=>({...x,count:x.rows.length})),[qualified]);
+{name:"0–25",count:qualified.filter(r=>r.WIDTH<=25).length},
+{name:"26–50",count:qualified.filter(r=>r.WIDTH>25&&r.WIDTH<=50).length},
+{name:"51–100",count:qualified.filter(r=>r.WIDTH>50&&r.WIDTH<=100).length},
+{name:"101–150",count:qualified.filter(r=>r.WIDTH>100&&r.WIDTH<=150).length},
+{name:"151–200",count:qualified.filter(r=>r.WIDTH>150).length}
+],[qualified]);
 
 const stockData=useMemo(()=>{const m=new Map();qualified.forEach(r=>{const x=m.get(r.STOCK);if(!x||num(r["PROFIT/LOT"])>num(x.best)){m.set(r.STOCK,{STOCK:r.STOCK,best:num(r["PROFIT/LOT"]),row:r})}});return[...m.values()].sort((a,b)=>b.best-a.best).slice(0,20)},[qualified]);
 
-const applyFilters=()=>{setApplied({minOtm,maxOtm,maxWidth,minPL,maxPL,minIvSpread,maxIvSpread,grades:[...gradeFilter],search});setView("best");setPage(1);setGradeOpen(false)};
-const resetScreen=()=>{const grades=["A+","A","B","C","D"];setMinOtm(3);setMaxOtm(8);setMaxWidth(200);setMinPL(3);setMaxPL(5);setMinIvSpread(-10);setMaxIvSpread(10);setSearch("");setGradeFilter(grades);setApplied({minOtm:3,maxOtm:8,maxWidth:200,minPL:3,maxPL:5,minIvSpread:-10,maxIvSpread:10,grades,search:""});setView("best");setPage(1);setGradeOpen(false)};
+const applyFilters=()=>{setApplied({minOtm,maxOtm,maxWidth,minPL,maxPL,grades:[...gradeFilter],search});setView("best");setPage(1);setGradeOpen(false)};
+const resetScreen=()=>{const grades=["A+","A","B","C","D"];setMinOtm(3);setMaxOtm(8);setMaxWidth(200);setMinPL(3);setMaxPL(5);setSearch("");setGradeFilter(grades);setApplied({minOtm:3,maxOtm:8,maxWidth:200,minPL:3,maxPL:5,grades,search:""});setView("best");setPage(1);setGradeOpen(false)};
 const openStrategy=r=>{setSelected(r);setScenario({lots:1,spot:r.SPOT,sellStrike:r.SELL,buyStrike:r.BUY,lotSize:r.LOT,sellBid:r.SELL_PE_BID,sellOffer:r.SELL_PE_OFFER,buyBid:r.BUY_PE_BID,buyOffer:r.BUY_PE_OFFER,sellPrice:r.SELL_PE_BID||0,buyPrice:r.BUY_PE_OFFER||0})};
-const openDrilldown=(title,items)=>setDrilldown({title,rows:items});
-const drillPL=(index)=>openDrilldown("P:L "+plData[index].name,plData[index].rows);
-const drillWidth=(index)=>openDrilldown("Spread width "+widthData[index].name,widthData[index].rows);
 const updateScenario=(key,value)=>setScenario(s=>({...s,[key]:value}));
 const calc=useMemo(()=>{if(!selected||!scenario)return null;const lots=Math.max(1,num(scenario.lots)),spot=num(scenario.spot),sellStrike=num(scenario.sellStrike),buyStrike=num(scenario.buyStrike),lotSize=Math.max(1,num(scenario.lotSize)),sellPrice=num(scenario.sellPrice),buyPrice=num(scenario.buyPrice);const credit=sellPrice-buyPrice,width=sellStrike-buyStrike,quantity=lotSize*lots,maxProfit=credit*quantity,maxLoss=(width-credit)*quantity,breakeven=sellStrike-credit,otmPts=spot-sellStrike,otm=spot>0?(otmPts/spot)*100:0,pl=maxProfit>0?maxLoss/maxProfit:0;return{lots,spot,sellStrike,buyStrike,lotSize,sellPrice,buyPrice,credit,width,maxProfit,maxLoss,breakeven,otm,otmPts,pl,quantity};},[selected,scenario]);
 const setRun=(k,v)=>setRunCfg(x=>({...x,[k]:v}));
-useEffect(()=>{
-  const expiry=document.getElementById("expiry-date-field");
-  const session=document.querySelector('input[placeholder="Paste fresh Breeze session token"]');
-  if(expiry&&session?.parentElement)session.parentElement.after(expiry);
-},[]);
 
 const syncController=(x)=>{
   setController(x);
@@ -193,15 +198,14 @@ const syncController=(x)=>{
   }
 };
 
-const loadLatestResults=(scanConfig=null,resultFile="latest_bps_results.csv")=>{
-  fetch(`http://127.0.0.1:8787/api/results/${encodeURIComponent(resultFile)}?ts=${Date.now()}`)
-    .then(r=>{if(!r.ok)throw new Error(`Result file could not be loaded (${r.status})`);return r.text()})
+const loadLatestResults=(scanConfig=null)=>{
+  fetch(`http://127.0.0.1:8787/api/results/latest_bps_results.csv?ts=${Date.now()}`)
+    .then(r=>r.text())
     .then(t=>Papa.parse(t,{
       header:true,
       skipEmptyLines:true,
       complete:r=>load(r.data,"EC2 Scan · "+new Date().toLocaleString("en-IN"),scanConfig)
-    }))
-    .catch(e=>syncController({...controller,status:"error",message:`Scan complete, but results could not be loaded: ${e.message}`,error:e.message}));
+    }));
 };
 
 const pollController=()=>{
@@ -209,26 +213,23 @@ const pollController=()=>{
     .then(r=>r.json())
     .then(x=>{
       syncController(x);
-      if(x.status==="complete"&&x.resultFile)loadLatestResults(lastRunConfig,x.resultFile);
+      if(x.status==="complete"&&x.resultFile)loadLatestResults(lastRunConfig);
     })
     .catch(()=>syncController({...controller,status:"offline",message:"Local controller not running"}));
 };
 
-useEffect(()=>{
-  pollController();
-},[]);
-
 const runScan=async()=>{
   try{
+    if(!expiry)throw new Error("Select an expiry date before running the scan.");
     const scanConfig={
       minOtm:num(minOtm),
       maxOtm:num(maxOtm),
       maxWidth:num(maxWidth),
       minPL:num(minPL),
       maxPL:num(maxPL),
-      expiry:runCfg.expiry,
       minOI:num(runCfg.minOI),
-      minVolume:num(runCfg.minVolume)
+      minVolume:num(runCfg.minVolume),
+      expiry:String(expiry).trim()
     };
     const payload={...runCfg,...scanConfig};
     setLastRunConfig(scanConfig);
@@ -249,7 +250,7 @@ const runScan=async()=>{
         syncController(q);
         if(!q.running){
           clearInterval(timer);
-          if(q.status==="complete"&&q.resultFile)loadLatestResults(scanConfig,q.resultFile);
+          if(q.status==="complete")loadLatestResults(scanConfig);
         }
       }catch(e){
         clearInterval(timer);
@@ -269,9 +270,8 @@ return <div className="app">
 </header>
 
 <section className="runPanel">
-{runPanel&&<div id="expiry-date-field" className="runExpiry"><label className="runExpiryField">Expiry Date<input type="date" min={minExpiry} max={maxExpiry} value={runCfg.expiry} onChange={e=>setRun("expiry",e.target.value)}/><small>Today through the next 3 months.</small></label></div>}
 <div className="runHead"><div><span className="pill">⚙ EC2 SCAN CONTROL</span><h2>Configure & run scanner</h2><p>Set execution/screening rules here before the EC2 scan. These values are written to scan_config.json and uploaded to EC2 before every scan.</p></div><button className="collapse" onClick={()=>setRunPanel(!runPanel)}>{runPanel?"Hide":"Show"}</button></div>
-{runPanel&&<><div className="runGrid"><label>EC2 Public IP<input value={runCfg.host} onChange={e=>setRun("host",e.target.value)}/></label><label>SSH User<input value={runCfg.user} onChange={e=>setRun("user",e.target.value)}/></label><label>SSH Key<input value={runCfg.keyPath} onChange={e=>setRun("keyPath",e.target.value)}/></label><label>Remote folder<input value={runCfg.remoteDir} onChange={e=>setRun("remoteDir",e.target.value)}/></label><label>Session token<input type="password" placeholder="Paste fresh Breeze session token" value={runCfg.sessionToken} onChange={e=>setRun("sessionToken",e.target.value)}/><small>Only sent to EC2 for this scan; not stored by React.</small></label><label>OTM min<input type="number" step=".1" value={minOtm} onChange={e=>setMinOtm(num(e.target.value))}/>%</label><label>OTM max<input type="number" step=".1" value={maxOtm} onChange={e=>setMaxOtm(num(e.target.value))}/>%</label><label>Max spread width<input type="number" value={maxWidth} onChange={e=>setMaxWidth(num(e.target.value))}/>₹</label><label>Min P:L<input type="number" step=".1" value={minPL} onChange={e=>setMinPL(num(e.target.value))}/></label><label>Max P:L<input type="number" step=".1" value={maxPL} onChange={e=>setMaxPL(num(e.target.value))}/></label><label>Min OI<input type="number" value={runCfg.minOI} onChange={e=>setRun("minOI",num(e.target.value))}/></label><label>Min volume<input type="number" value={runCfg.minVolume} onChange={e=>setRun("minVolume",num(e.target.value))}/></label><div className="runRules"><b>Scan configuration</b><span>OTM {minOtm}–{maxOtm}% · Width ≤ ₹{maxWidth} · P:L 1:{minPL}–1:{maxPL} · OI ≥ {integer(runCfg.minOI)} · Volume ≥ {integer(runCfg.minVolume)}</span></div></div><div className="runActions"><button className="runBtn" disabled={controller.running} onClick={runScan}>{controller.running?"⏳ Running…":"🚀 Run EC2 Scan"}</button><button className="testBtn" onClick={pollController}>↻ Refresh status</button><span className={"controllerStatus "+(controller.status==="complete"?"ok":controller.status==="error"?"bad":"")}>● {controller.message}</span></div><div className="runLog" style={{maxHeight:260,overflowY:"auto",overflowX:"auto",fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace"}}>
+{runPanel&&<><div className="runGrid"><label>EC2 Public IP<input value={runCfg.host} onChange={e=>setRun("host",e.target.value)}/></label><label>SSH User<input value={runCfg.user} onChange={e=>setRun("user",e.target.value)}/></label><label>SSH Key<input value={runCfg.keyPath} onChange={e=>setRun("keyPath",e.target.value)}/></label><label>Remote folder<input value={runCfg.remoteDir} onChange={e=>setRun("remoteDir",e.target.value)}/></label><label>Expiry date<input type="date" min={localDateISO()} max={addMonthsISO(3)} value={/^\d{4}-\d{2}-\d{2}$/.test(String(expiry||""))?expiry:""} onChange={e=>{setExpiry(e.target.value);try{localStorage.setItem("bps-selected-expiry",e.target.value)}catch{}}}/><small>Used exactly by the EC2 scanner; no automatic fallback.</small></label><label>Session token<input type="password" placeholder="Paste fresh Breeze session token" value={runCfg.sessionToken} onChange={e=>setRun("sessionToken",e.target.value)}/><small>Only sent to EC2 for this scan; not stored by React.</small></label><label>OTM min<input type="number" step=".1" value={minOtm} onChange={e=>setMinOtm(num(e.target.value))}/>%</label><label>OTM max<input type="number" step=".1" value={maxOtm} onChange={e=>setMaxOtm(num(e.target.value))}/>%</label><label>Max spread width<input type="number" value={maxWidth} onChange={e=>setMaxWidth(num(e.target.value))}/>₹</label><label>Min P:L<input type="number" step=".1" value={minPL} onChange={e=>setMinPL(num(e.target.value))}/></label><label>Max P:L<input type="number" step=".1" value={maxPL} onChange={e=>setMaxPL(num(e.target.value))}/></label><label>Min OI<input type="number" value={runCfg.minOI} onChange={e=>setRun("minOI",num(e.target.value))}/></label><label>Min volume<input type="number" value={runCfg.minVolume} onChange={e=>setRun("minVolume",num(e.target.value))}/></label><div className="runRules"><b>Scan configuration</b><span>Expiry {formatExpiryDisplay(expiry)} · OTM {minOtm}–{maxOtm}% · Width ≤ ₹{maxWidth} · P:L 1:{minPL}–1:{maxPL} · OI ≥ {integer(runCfg.minOI)} · Volume ≥ {integer(runCfg.minVolume)}</span></div></div><div className="runActions"><button className="runBtn" disabled={controller.running} onClick={runScan}>{controller.running?"⏳ Running…":"🚀 Run EC2 Scan"}</button><button className="testBtn" onClick={pollController}>↻ Refresh status</button><span className={"controllerStatus "+(controller.status==="complete"?"ok":controller.status==="error"?"bad":"")}>● {controller.message}</span></div><div className="runLog" style={{maxHeight:260,overflowY:"auto",overflowX:"auto",fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace"}}>
 {controller.lines?.map((x,i)=><div key={i} style={{display:"flex",gap:10,whiteSpace:"pre",lineHeight:1.45}}>
   <span style={{color:"#7f93ad",minWidth:70,userSelect:"none"}}>{logTimes[i]||"—"}</span>
   <span>{x}</span>
@@ -282,17 +282,18 @@ return <div className="app">
 
 {!rows.length?<section className="empty"><div className="dropIcon">CSV</div><h2>Load your scanner results</h2><p>Use the current <code>bps_results.csv</code>. All analysis runs locally in your browser.</p><label className="upload primary"><input type="file" accept=".csv" onChange={handleFile}/><span>Choose CSV</span></label><button className="text" onClick={loadDemo}>Load 176-row demo dataset</button></section>:
 <>
-<div className="fileBar"><span>● <b>{fileName}</b> · <b>{stats.all}</b> strategies loaded</span><span><b>{stats.q}</b> qualified · <b>{stats.all-stats.q}</b> outside · <b>{applied.grades.length}/5</b> grades active · OTM {applied.minOtm}–{applied.maxOtm}% · P:L {applied.minPL}–{applied.maxPL} · IV spread {applied.minIvSpread}–{applied.maxIvSpread}%</span></div>
+<div className="expiryBanner" style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",margin:"10px 0",border:"1px solid #dbe4ef",borderRadius:10,background:"#f8fbfd"}}><span className="expiryLabel" style={{fontSize:10,fontWeight:800,color:"#63748a",letterSpacing:".08em"}}>BPS EXPIRY</span><strong style={{fontSize:16,color:"#17243a"}}>{formatExpiryDisplay(expiryFromRows(rows)||expiry)}</strong><span className="expiryNote" style={{fontSize:11,color:"#7f93ad"}}>All displayed strategies are for this selected expiry.</span></div>
+<div className="fileBar"><span>● <b>{fileName}</b> · <b>{stats.all}</b> strategies loaded</span><span><b>{stats.q}</b> qualified · <b>{stats.all-stats.q}</b> outside · <b>{applied.grades.length}/5</b> grades active · OTM {applied.minOtm}–{applied.maxOtm}% · P:L {applied.minPL}–{applied.maxPL}</span></div>
 
 <section className="filters">
 <div className="filterTitle">BEST-PICK SCREEN <span>Set criteria, then apply</span></div>
 <label>OTM min <input type="number" step=".1" value={minOtm} onChange={e=>{setMinOtm(num(e.target.value));setPage(1)}}/>%</label>
 <label>OTM max <input type="number" step=".1" value={maxOtm} onChange={e=>{setMaxOtm(num(e.target.value));setPage(1)}}/>%</label>
-<label>Max width <input type="number" value={maxWidth} onChange={e=>{setMaxWidth(num(e.target.value));setPage(1)}}/>₹</label><label>P:L min <input type="number" step=".1" value={minPL} onChange={e=>setMinPL(num(e.target.value))}/></label><label>P:L max <input type="number" step=".1" value={maxPL} onChange={e=>setMaxPL(num(e.target.value))}/></label><label>IV spread min <input type="number" step=".1" value={minIvSpread} onChange={e=>setMinIvSpread(num(e.target.value))}/>%</label><label>IV spread max <input type="number" step=".1" value={maxIvSpread} onChange={e=>setMaxIvSpread(num(e.target.value))}/>%</label>
+<label>Max width <input type="number" value={maxWidth} onChange={e=>{setMaxWidth(num(e.target.value));setPage(1)}}/>₹</label><label>P:L min <input type="number" step=".1" value={minPL} onChange={e=>setMinPL(num(e.target.value))}/></label><label>P:L max <input type="number" step=".1" value={maxPL} onChange={e=>setMaxPL(num(e.target.value))}/></label>
 <div className="gradeFilterWrap"><span className="fieldLabel">Grade</span><button className="gradeSelect" onClick={()=>setGradeOpen(!gradeOpen)}>{gradeFilter.length===5?"All Grades":gradeFilter.length+" selected"} <span>⌄</span></button>{gradeOpen&&<div className="gradeMenu" onClick={e=>e.stopPropagation()}>{["A+","A","B","C","D"].map(g=><label key={g}><input type="checkbox" checked={gradeFilter.includes(g)} onChange={()=>setGradeFilter(x=>x.includes(g)?x.filter(v=>v!==g):[...x,g])}/><Grade g={g}/><span>{g==="A+"?"Exceptional":g==="A"?"Strong":g==="B"?"Good":g==="C"?"Watch":"Weak"}</span></label>)}<div className="gradeActions"><button className="selectAll" onClick={()=>setGradeFilter(["A+","A","B","C","D"])}>Select all</button><button className="deselectAll" onClick={()=>setGradeFilter([])}>Deselect all</button></div><div className="pendingNote">Selection changes apply when you click Apply Filters.</div></div>}</div>
 <label>Search <input className="search" placeholder="Stock..." value={search} onChange={e=>setSearch(e.target.value)}/></label>
 <label>Best picks <select value={topN} onChange={e=>setTopN(num(e.target.value))}><option value="5">Top 5</option><option value="10">Top 10</option><option value="15">Top 15</option><option value="25">Top 25</option></select></label>
-<label>Rank by <select value={sortBy} onChange={e=>setSortBy(e.target.value)}><option value="SCORE">Opportunity score</option><option value="PROFIT/LOT">Profit / lot</option><option value="P:L">P:L</option><option value="OTM%">Far OTM</option><option value="WIDTH">Narrow width</option><option value="IV SPREAD">IV spread</option></select></label>
+<label>Rank by <select value={sortBy} onChange={e=>setSortBy(e.target.value)}><option value="SCORE">Opportunity score</option><option value="PROFIT/LOT">Profit / lot</option><option value="P:L">P:L</option><option value="OTM%">Far OTM</option><option value="WIDTH">Narrow width</option></select></label>
 <button className="apply" onClick={applyFilters}>✓ Apply Filters</button><button className="reset" onClick={resetScreen}>Reset</button>
 </section>
 
@@ -304,7 +305,7 @@ return <div className="app">
 </section>
 
 <section className="hero">
-<div><span className="pill">⚡ LIVE SCREENING LOGIC</span><h2>Opportunity ranking</h2><p>Score = OTM 30% + P:L 28% + width 18% + credit/spot 14% + IV spread 10%. Grades are relative to the currently selected scan criteria. Use this as a shortlist, not as a trade signal.</p></div>
+<div><span className="pill">⚡ LIVE SCREENING LOGIC</span><h2>Opportunity ranking</h2><p>Score = OTM 35% + P:L 30% + width 20% + credit/spot 15%. Grades are relative to the currently selected scan criteria. Use this as a shortlist, not as a trade signal.</p></div>
 <div className="heroStats"><div><b>{best.length}</b><span>best picks</span></div><div><b>{stats.all}</b><span>strategies</span></div><div><b>{stats.q?Math.round(stats.q/stats.all*100):0}%</b><span>pass rate</span></div></div>
 </section>
 
@@ -316,27 +317,25 @@ return <div className="app">
 {view==="all"&&<div className="completeTableToolbar"><span><b>Complete CSV</b> · {completeFiltered.length} of {allRows.length} rows</span><button onClick={()=>setCompleteFilters({})}>Clear column filters</button><span className="filterHelp">Text = contains · numeric = exact or use &gt; / &lt; / &gt;= / &lt;=</span></div>}
 <table className={view==="all"?"completeTable":""}>
 <thead>
-<tr>{(view==="all"?completeColumns.map(c=>c.label):["RANK","STOCK","GRADE","SPOT","SELL","BUY","SELL IV","BUY IV","IV SPREAD","IV RATIO","OTM","WIDTH","CREDIT","LOT","PROFIT/LOT","LOSS/LOT","BREAKEVEN","P:L"]).map((h,i)=><th key={h} className={view==="all"?`col-${completeColumns[i].group}`:""}>{h}</th>)}</tr>
+<tr>{(view==="all"?completeColumns.map(c=>c.label):["RANK","STOCK","GRADE","SPOT","SELL","BUY","OTM","WIDTH","CREDIT","LOT","PROFIT/LOT","LOSS/LOT","BREAKEVEN","P:L"]).map((h,i)=><th key={h} className={view==="all"?`col-${completeColumns[i].group}`:""}>{h}</th>)}</tr>
 {view==="all"&&<tr className="columnFilterRow">{completeColumns.map(c=><th key={c.key} className={`col-${c.group}`}><input aria-label={`Filter ${c.label}`} value={completeFilters[c.key]||""} onChange={e=>{setCompleteFilters(x=>({...x,[c.key]:e.target.value}));setPage(1)}} placeholder="Filter…"/></th>)}</tr>}
 </thead>
 <tbody>{paged.map((r,i)=><tr className={"clickable scoreRow "+gradeClass(r.GRADE)} onClick={()=>openStrategy(r)} key={r.STOCK+"-"+r.SELL+"-"+r.BUY+"-"+i}>
-{view==="all"? <>
-<td className="col-identity">{r.RK}</td><td className="stock col-identity">{r.STOCK}</td><td className="col-identity">{r.EXPIRY||"—"}</td><td className="col-market">{money(r.SPOT)}</td><td className="col-strikes">{integer(r.SELL)}</td><td className="col-strikes">{integer(r.BUY)}</td><td className="col-iv">{r.SELL_IV.toFixed(2)}%</td><td className="col-iv">{r.BUY_IV.toFixed(2)}%</td><td className="col-iv">{r["IV SPREAD"].toFixed(2)}%</td><td className="col-iv">{r["IV RATIO"].toFixed(3)}</td><td className="col-quotes">{money(r.SELL_PE_BID)}</td><td className="col-quotes">{money(r.SELL_PE_OFFER)}</td><td className="col-quotes">{money(r.BUY_PE_BID)}</td><td className="col-quotes">{money(r.BUY_PE_OFFER)}</td><td className="col-metrics">{r["OTM%"].toFixed(2)}%</td><td className="col-metrics">{r["OTM PTS"].toFixed(2)}</td><td className="col-metrics">{integer(r.WIDTH)}</td><td className="col-economics">{money(r.CREDIT)}</td><td className="col-economics">{integer(r.LOT)}</td><td className="profit col-economics">{money(r["PROFIT/LOT"])}</td><td className="loss col-risk">{money(r["LOSS/LOT"])}</td><td className="col-risk">{money(r.BREAKEVEN)}</td><td className="col-risk"><b>1:{r["P:L"].toFixed(2)}</b></td><td className="col-dashboard"><Grade g={r.GRADE}/></td><td className="col-dashboard"><b>{r.SCORE}</b></td>
-</>:<><td><span className="rankBadge">{i+1}</span></td><td className="stock">{r.STOCK}</td><td><Grade g={r.GRADE}/></td><td>{money(r.SPOT)}</td><td>{integer(r.SELL)}</td><td>{integer(r.BUY)}</td><td>{r.SELL_IV.toFixed(2)}%</td><td>{r.BUY_IV.toFixed(2)}%</td><td>{r["IV SPREAD"].toFixed(2)}%</td><td>{r["IV RATIO"].toFixed(3)}</td><td>{r["OTM%"].toFixed(2)}%</td><td>{integer(r.WIDTH)}</td><td>{money(r.CREDIT)}</td><td>{integer(r.LOT)}</td><td className="profit">{money(r["PROFIT/LOT"])}</td><td className="loss">{money(r["LOSS/LOT"])}</td><td>{money(r.BREAKEVEN)}</td><td><b>1:{r["P:L"].toFixed(2)}</b></td></>}
+{view==="all"?<> 
+<td className="col-identity">{r.RK}</td><td className="stock col-identity">{r.STOCK}</td><td className="col-market">{money(r.SPOT)}</td><td className="col-strikes">{integer(r.SELL)}</td><td className="col-strikes">{integer(r.BUY)}</td><td className="col-quotes">{money(r.SELL_PE_BID)}</td><td className="col-quotes">{money(r.SELL_PE_OFFER)}</td><td className="col-quotes">{money(r.BUY_PE_BID)}</td><td className="col-quotes">{money(r.BUY_PE_OFFER)}</td><td className="col-metrics">{r["OTM%"].toFixed(2)}%</td><td className="col-metrics">{r["OTM PTS"].toFixed(2)}</td><td className="col-metrics">{integer(r.WIDTH)}</td><td className="col-economics">{money(r.CREDIT)}</td><td className="col-economics">{integer(r.LOT)}</td><td className="profit col-economics">{money(r["PROFIT/LOT"])}</td><td className="loss col-risk">{money(r["LOSS/LOT"])}</td><td className="col-risk">{money(r.BREAKEVEN)}</td><td className="col-risk"><b>1:{r["P:L"].toFixed(2)}</b></td><td className="col-dashboard"><Grade g={r.GRADE}/></td><td className="col-dashboard"><b>{r.SCORE}</b></td>
+</>:<><td><span className="rankBadge">{i+1}</span></td><td className="stock">{r.STOCK}</td><td><Grade g={r.GRADE}/></td><td>{money(r.SPOT)}</td><td>{integer(r.SELL)}</td><td>{integer(r.BUY)}</td><td>{r["OTM%"].toFixed(2)}%</td><td>{integer(r.WIDTH)}</td><td>{money(r.CREDIT)}</td><td>{integer(r.LOT)}</td><td className="profit">{money(r["PROFIT/LOT"])}</td><td className="loss">{money(r["LOSS/LOT"])}</td><td>{money(r.BREAKEVEN)}</td><td><b>1:{r["P:L"].toFixed(2)}</b></td></>}
 </tr>)}</tbody></table></div>
 {view==="all"&&<div className="pagination"><span>Showing <b>{displayed.length?((safePage-1)*pageSize+1):0}–{Math.min(safePage*pageSize,displayed.length)}</b> of <b>{displayed.length}</b></span><div><button disabled={safePage<=1} onClick={()=>setPage(safePage-1)}>← Prev</button><select value={pageSize} onChange={e=>{setPageSize(num(e.target.value));setPage(1)}}><option value="25">25 / page</option><option value="50">50 / page</option><option value="100">100 / page</option><option value="999999">All</option></select><button disabled={safePage>=totalPages} onClick={()=>setPage(safePage+1)}>Next →</button></div></div>}
 </section>
 
 <section className="charts">
 <Chart title="Profit Stats (1 stock / 1 lot)" sub="Best qualified BPS setups · profit shown per single lot"><ResponsiveContainer><BarChart data={best} margin={{top:10,right:15,left:10,bottom:5}}><CartesianGrid strokeDasharray="3 3" stroke="#dbe4ef"/><XAxis dataKey="STOCK" interval={0} tick={{fontSize:9}} angle={-25} textAnchor="end" height={55}/><YAxis tickFormatter={integer}/><Tooltip contentStyle={{borderRadius:10,border:"1px solid #dbe4ef"}} formatter={(v)=>money(v)} labelFormatter={(label)=>{const r=best.find(x=>x.STOCK===label);return r?`${r.STOCK} · BPS ${integer(r.SELL)} / ${integer(r.BUY)}`:label}} content={({active,payload,label})=>{if(!active||!payload?.length)return null;const r=best.find(x=>x.STOCK===label);if(!r)return null;return <div style={{background:"#fff",border:"1px solid #dbe4ef",borderRadius:10,padding:"10px 12px",boxShadow:"0 8px 20px #17243a18"}}><div style={{fontWeight:900,color:"#17243a",marginBottom:4}}>{r.STOCK}</div><div style={{fontSize:12}}>Profit / lot: <b>{money(r["PROFIT/LOT"])}</b></div><div style={{fontSize:11,color:"#61758e",marginTop:3}}>BPS: SELL {integer(r.SELL)} PE / BUY {integer(r.BUY)} PE</div><div style={{fontSize:11,color:"#61758e",marginTop:2}}>Credit {money(r.CREDIT)} · Width {integer(r.WIDTH)} · OTM {r["OTM%"].toFixed(2)}%</div></div>}}/><Bar dataKey="PROFIT/LOT" name="Profit / lot" radius={[7,7,2,2]}>{best.map((r,i)=><Cell key={i} fill={r.GRADE==="A+"?"#16a34a":r.GRADE==="A"?"#0f766e":r.GRADE==="B"?"#2563eb":r.GRADE==="C"?"#f59e0b":"#ef4444"}/>)}</Bar></BarChart></ResponsiveContainer></Chart>
-<Chart title="P:L distribution" sub="Green = stronger risk/reward · red = weaker risk/reward · click a band to drill down"><ResponsiveContainer><PieChart margin={{top:10,right:18,bottom:10,left:4}}><Pie data={plData} dataKey="count" nameKey="name" cx="62%" cy="48%" outerRadius={96} innerRadius={56} paddingAngle={3} label>{plData.map((_,i)=><Cell key={i} fill={plColors[i]} className="chartClickable" onClick={()=>drillPL(i)}/>)}</Pie><Tooltip/><Legend layout="vertical" align="left" verticalAlign="middle" wrapperStyle={{left:0,width:"28%",lineHeight:"24px"}}/></PieChart></ResponsiveContainer></Chart>
+<Chart title="P:L distribution" sub="Green = stronger risk/reward · red = weaker risk/reward"><ResponsiveContainer><PieChart><Pie data={plData} dataKey="count" nameKey="name" cx="50%" cy="46%" outerRadius={108} innerRadius={62} paddingAngle={3} label>{plData.map((_,i)=><Cell key={i} fill={plColors[i]}/>)}</Pie><Tooltip/><Legend/></PieChart></ResponsiveContainer></Chart>
 <Chart wide title="Best profit by stock" sub="Highest profit/lot among qualified stocks · each bar is the best BPS found for that stock"><ResponsiveContainer><BarChart data={stockData} layout="vertical" margin={{top:5,right:30,left:8,bottom:5}}><CartesianGrid strokeDasharray="3 3" stroke="#dbe4ef"/><XAxis type="number" tickFormatter={integer}/><YAxis type="category" dataKey="STOCK" width={135} interval={0} tick={<StockTick/>} tickLine={false} axisLine={false}/><Tooltip cursor={{fill:"#eef7f6"}} content={({active,payload,label})=>{if(!active||!payload?.length)return null;const item=stockData.find(x=>x.STOCK===label);const r=item?.row;if(!r)return null;return <div style={{background:"#fff",border:"1px solid #dbe4ef",borderRadius:10,padding:"10px 12px",boxShadow:"0 8px 20px #17243a18",minWidth:210}}><div style={{fontWeight:900,color:"#17243a",marginBottom:5}}>{r.STOCK}</div><div style={{fontSize:12}}>Profit / lot: <b style={{color:"#087f5b"}}>{money(r["PROFIT/LOT"])}</b></div><div style={{fontSize:11,color:"#61758e",marginTop:4}}>BPS: SELL {integer(r.SELL)} PE / BUY {integer(r.BUY)} PE</div><div style={{fontSize:11,color:"#61758e",marginTop:3}}>Credit {money(r.CREDIT)} · Width {integer(r.WIDTH)}</div><div style={{fontSize:11,color:"#61758e",marginTop:3}}>OTM {r["OTM%"].toFixed(2)}% · OTM pts {r["OTM PTS"].toFixed(2)}</div><div style={{fontSize:11,color:"#61758e",marginTop:3}}>P:L 1:{r["P:L"].toFixed(2)} · Grade {r.GRADE} · Score {r.SCORE}</div><div style={{fontSize:10,color:"#8a9aab",marginTop:6}}>Lot {integer(r.LOT)} · Expiry {r.EXPIRY||"—"}</div></div>}}/><Bar dataKey="best" name="Profit / lot" radius={[0,7,7,0]}>{stockData.map((x,i)=><Cell key={i} fill={x.row.GRADE==="A+"?"#16a34a":x.row.GRADE==="A"?"#0f766e":x.row.GRADE==="B"?"#2563eb":x.row.GRADE==="C"?"#f59e0b":"#ef4444"}/>)}</Bar></BarChart></ResponsiveContainer></Chart>
-<Chart title="Spread width" sub="Green → amber → red as width/risk increases · click a band to drill down"><ResponsiveContainer><BarChart data={widthData}><CartesianGrid strokeDasharray="3 3" stroke="#dbe4ef"/><XAxis dataKey="name"/><YAxis allowDecimals={false}/><Tooltip/><Bar dataKey="count" name="Strategies" radius={[7,7,2,2]}>{widthData.map((_,i)=><Cell key={i} fill={["#22c55e","#f59e0b","#3b82f6","#ef4444","#991b1b"][i]} className="chartClickable" onClick={()=>drillWidth(i)}/>)}</Bar></BarChart></ResponsiveContainer></Chart>
-<Chart title="OTM vs profit" sub="Each dot is a qualified strategy · click a dot to open its scenario"><ResponsiveContainer><ScatterChart margin={{top:15,right:15,bottom:5,left:10}}><CartesianGrid stroke="#dbe4ef"/><XAxis type="number" dataKey="OTM%" name="OTM" unit="%"/><YAxis type="number" dataKey="PROFIT/LOT" name="Profit / lot" tickFormatter={integer}/><ZAxis range={[50,95]}/><Tooltip/><ReferenceLine x={applied.minOtm} stroke="#f59e0b" strokeDasharray="5 5"/><ReferenceLine x={applied.maxOtm} stroke="#ef4444" strokeDasharray="5 5"/>{["A+","A","B","C","D"].map(g=><Scatter key={g} name={g} data={qualified.filter(r=>r.GRADE===g)} fill={g==="A+"?"#16a34a":g==="A"?"#0f766e":g==="B"?"#2563eb":g==="C"?"#f59e0b":"#ef4444"} onClick={r=>openStrategy(r)} className="chartClickable" />)}</ScatterChart></ResponsiveContainer></Chart>
+<Chart title="Spread width" sub="Green → amber → red as width/risk increases"><ResponsiveContainer><BarChart data={widthData}><CartesianGrid strokeDasharray="3 3" stroke="#dbe4ef"/><XAxis dataKey="name"/><YAxis allowDecimals={false}/><Tooltip/><Bar dataKey="count" name="Strategies" radius={[7,7,2,2]}>{widthData.map((_,i)=><Cell key={i} fill={["#22c55e","#f59e0b","#3b82f6","#ef4444","#991b1b"][i]}/>)}</Bar></BarChart></ResponsiveContainer></Chart>
+<Chart title="OTM vs profit" sub="Each dot is a qualified strategy"><ResponsiveContainer><ScatterChart margin={{top:15,right:15,bottom:5,left:10}}><CartesianGrid stroke="#dbe4ef"/><XAxis type="number" dataKey="OTM%" name="OTM" unit="%"/><YAxis type="number" dataKey="PROFIT/LOT" name="Profit / lot" tickFormatter={integer}/><ZAxis range={[50,95]}/><Tooltip/><ReferenceLine x={applied.minOtm} stroke="#f59e0b" strokeDasharray="5 5"/><ReferenceLine x={applied.maxOtm} stroke="#ef4444" strokeDasharray="5 5"/>{["A+","A","B","C","D"].map(g=><Scatter key={g} name={g} data={qualified.filter(r=>r.GRADE===g)} fill={g==="A+"?"#16a34a":g==="A"?"#0f766e":g==="B"?"#2563eb":g==="C"?"#f59e0b":"#ef4444"} />)}</ScatterChart></ResponsiveContainer></Chart>
 </section>
 </>}
-
-{drilldown&&<div className="overlay" onClick={()=>setDrilldown(null)}><aside className="drawer drilldownDrawer" onClick={e=>e.stopPropagation()}><div className="drawerTop"><div><span className="pill dark">CHART DRILL-DOWN</span><h2>{drilldown.title}</h2><p>{drilldown.rows.length} qualified strategies in this selection</p></div><button className="close" onClick={()=>setDrilldown(null)}>×</button></div><div className="drillLegend"><span><i className="profitDot"></i>MAX PROFIT / LOT</span><span><i className="lossDot"></i>MAX LOSS / LOT</span></div><div className="drillRows">{drilldown.rows.length?drilldown.rows.map((r,i)=><button key={r.STOCK+"-"+r.SELL+"-"+r.BUY+"-"+i} onClick={()=>{setDrilldown(null);openStrategy(r)}}><span><b>{r.STOCK}</b><small>SELL {integer(r.SELL)} / BUY {integer(r.BUY)} · OTM {r["OTM%"].toFixed(2)}% · WIDTH {integer(r.WIDTH)}</small></span><strong><em>{amount(r["PROFIT/LOT"])}</em><em>{amount(r["LOSS/LOT"])}</em></strong></button>):<p className="drillEmpty">No qualified strategies match this chart selection.</p>}</div></aside></div>}
 
 {selected&&scenario&&<div className="overlay" onClick={()=>setSelected(null)}><aside className="drawer" onClick={e=>e.stopPropagation()}>
 <div className="drawerTop"><div><span className="pill dark">LIVE BPS SCENARIO</span><h2>{selected.STOCK}</h2><p>Scanner rank #{selected.RK} · dashboard score {selected.SCORE}{selected.EXPIRY&&" · "+selected.EXPIRY}</p></div><button className="close" onClick={()=>setSelected(null)}>×</button></div>
